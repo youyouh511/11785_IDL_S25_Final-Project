@@ -8,7 +8,7 @@ import json
 import tigramite.data_processing as pp
 from tigramite.pcmci import PCMCI
 import tigramite.independence_tests as it
-from tigramite.toymodels import structural_causal_model as toys
+from tigramite.toymodels import structural_causal_processes as toys
 
 
 
@@ -16,6 +16,7 @@ class AdjacencyMatrix:
     """
     Adjacency matrix representation of causal graph, based on time series data
     Weight qualifies the strength of the causal link
+    Initialized with unnormalized adjacency matrices (link_matrix, val_matrix, adj_matrix)
     """ 
 
     def preprocess_json(self, json_file_path: str, local_lag: int = 8, oci_lag: int = 31) -> dict[str, list[tuple[tuple[int, int], float]]]:
@@ -159,7 +160,7 @@ class AdjacencyMatrix:
         return link_matrix, val_matrix, adj_matrix
     
 
-    def __init__(self, json_file_path, max_timelag: str, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
+    def __init__(self, json_file_path: str, max_timelag: int, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
         """
         Initialize the AdjacencyMatrix class
         Args:
@@ -192,12 +193,12 @@ class AdjacencyMatrix:
         )
     
 
-    def normalize_adj_matrix(self):
+    def normalize_adj_matrix(self, matrix):
         """
         Normalize the adjacency matrix to sum to 1
         """
         # Normalize the weight matrix
-        norm_adj_matrix = self.adj_matrix / np.sum(np.abs(self.adj_matrix), axis=1, keepdims=True)
+        norm_adj_matrix = matrix / np.sum(np.abs(matrix), axis=1, keepdims=True)
         
         # Set diagonal to 0
         np.fill_diagonal(norm_adj_matrix, 0)
@@ -205,7 +206,7 @@ class AdjacencyMatrix:
         return norm_adj_matrix
     
 
-    def mask_target (self, target_var: str = "target"):
+    def mask_target (self, matrix, target_var: str = "target"):
         """
         Mask the target variable in the adjacency matrix
         Args:
@@ -215,25 +216,9 @@ class AdjacencyMatrix:
         target_index = self.varlist.index(target_var)
         
         # Set all weights to 0 for the target variable
-        masked_adj_matrix = self.adj_matrix.copy()
+        masked_adj_matrix = matrix
 
         masked_adj_matrix[target_index, :] = None
         masked_adj_matrix[:, target_index] = None
         
         return masked_adj_matrix
-    
-
-    def match_temporal_resolution(self, target_var: str, T: int):
-        """
-        Match the temporal resolution of the adjacency matrix to the target variable
-        Args:
-            target: name of the target variable
-            T: length of the target variable time series
-        """
-        # Get index of target variable
-        target_index = self.varlist.index(target_var)
-        
-        # Expand the adjacency matrix to match the temporal resolution of the target variable
-        expanded_adj_matrix = np.repeat(self.adj_matrix, T, axis=0)
-        
-        return expanded_adj_matrix
