@@ -3,17 +3,17 @@ import torch.nn as nn
 
 class TemporalLSTM(nn.Module):
     '''
-    Single-layer LSTM to extract temporal features of the given variable
+    LSTM to extract temporal features of the given variable
     '''
-    def __init__(self, hidden_dim: int = 256):
+    def __init__(self, num_layers: int = 1, hidden_dim: int = 256):
         super().__init__()
         
         self.lstm = nn.LSTM(
-            input_size=1,          # one scalar per time-step
-            hidden_size=hidden_dim,
-            num_layers=1,          # single layer as per paper
-            batch_first=True,
-            bidirectional=False,   # unidirectional LSTM
+            input_size=1,           # 1 scalar per time-step
+            hidden_size=hidden_dim, # 256 by default as in the paper
+            num_layers=num_layers,  # single layer by default as in the paper
+            batch_first=True,       # input shape (batch_size, time_steps, num_nodes)
+            bidirectional=False,    # unidirectional LSTM for causal inference
         )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
