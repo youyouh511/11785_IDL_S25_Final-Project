@@ -1,0 +1,15 @@
+Initial setup in terminal:
+
+### Virtual Miniconda setup
+curl -fsSL https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -o miniconda.sh
+bash miniconda.sh -b -p $HOME/miniconda
+rm miniconda.sh
+export PATH="$HOME/miniconda/bin:$PATH"
+
+### Environment setup
+conda env create -f env.yml
+
+### Activate environment and check device
+conda activate idl_final
+python -c "import torch; print('CUDA available:', torch.cuda.is_available())"
+nvidia-smi
