@@ -5,7 +5,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 from model import CausalGNN
-from evaluate import evaluate
+from train.evaluate import evaluate
 
 
 def train(model: nn.Module,
