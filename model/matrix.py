@@ -18,10 +18,8 @@ class AdjacencyMatrix:
     def __init__(self, input_data: pd.DataFrame, varlist: Optional[list[str]] = None):
         """
         Args:
-            input_data: numpy array of shape (T, V), where T = timesteps, V = variables
-            matrix_dim: number of variables, i.e., columns in input_data, equals to V
+            input_data: pandas array of shape (T, V), where T = timesteps, V = variables
             var_list: list of variable names
-            adj_matrix: adjacency matrix of shape (V, V)
         """
         self.data = input_data.to_numpy()
         self.varlist = list(input_data.columns)
@@ -38,7 +36,7 @@ class AdjacencyMatrix:
         Returns:
             link_matrix         : binary matrix of shape (V, V, tau_max) indicating causal links (above pc_alpha)
             val_matrix          : matrix of coefficients of shape (V, V, tau_max)
-            weight_matrix       : weighted adjacency matrix of shape (V, V)            
+            adj_matrix          : weighted adjacency matrix of shape (V, V)            
         """
         
         dataframe = pp.DataFrame(self.input_data, self.var_list)
@@ -60,7 +58,7 @@ class AdjacencyMatrix:
         val_matrix = results['val_matrix']     # coefficients
         
         # Build weighted matrices (binary and weighted)
-        weight_matrix = np.zeros((self.V, self.V), dtype=float)
+        adj_matrix = np.zeros((self.V, self.V), dtype=float)
         for i in range(self.V):
             for j in range(self.V):
                 if i == j:
@@ -72,11 +70,40 @@ class AdjacencyMatrix:
                     # Select lag with maximum magnitutde coefficient (positive or negative)
                     coeffs = val_matrix[i, j, sig_lags]
                     max_index = sig_lags[np.argmax(np.abs(coeffs))]
-                    weight_matrix[i, j] = val_matrix[i, j, max_index]
+                    adj_matrix[i, j] = val_matrix[i, j, max_index]
         
-        self.link_matrix, self.val_matrix, self.weight_matrix = link_matrix, val_matrix, weight_matrix
+        self.link_matrix, self.val_matrix, self.adj_matrix = link_matrix, val_matrix, adj_matrix
 
-        return link_matrix, val_matrix, weight_matrix
+        return link_matrix, val_matrix, adj_matrix
+    
+
+    def normalize_adj_matrix(self):
+        """
+        Normalize the adjacency matrix to sum to 1
+        """
+        # Normalize the weight matrix
+        norm_adj_matrix = self.adj_matrix / np.sum(np.abs(self.adj_matrix), axis=1, keepdims=True)
+        
+        # Set diagonal to 0
+        np.fill_diagonal(norm_adj_matrix, 0)
+        
+        return norm_adj_matrix
+    
+
+    def mask_target (self, target_var: str):
+        """
+        Mask the target variable in the adjacency matrix
+        Args:
+            target: name of the target variable
+        """
+        # Get index of target variable
+        target_index = self.varlist.index(target_var)
+        
+        # Set all weights to 0 for the target variable
+        self.adj_matrix[target_index, :] = 0
+        self.adj_matrix[:, target_index] = 0
+        
+        return self.adj_matrix
 
 
 
