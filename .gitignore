@@ -1,2 +1,6 @@
 *.npy
 *.zip
+*.json
+*.jsonl
+__pychache__/*
+datadownload_rev.ipynb

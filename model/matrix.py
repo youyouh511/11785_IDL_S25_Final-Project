@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 import torch
@@ -19,7 +19,7 @@ class AdjacencyMatrix:
     Initialized with unnormalized adjacency matrices (link_matrix, val_matrix, adj_matrix)
     """ 
 
-    def preprocess_json(self, json_file_path: str, local_lag: int = 8, oci_lag: int = 31) -> dict[str, list[tuple[tuple[int, int], float]]]:
+    def preprocess_json_to_pnc(self, json_file_path: str, local_lag: int = 8, oci_lag: int = 31) -> dict[str, list[tuple[tuple[int, int], float]]]:
         """
         Preprocess JSON file to extract coefficients and time lags
         Args:
@@ -92,26 +92,84 @@ class AdjacencyMatrix:
             print(f"  ... and {len(coefficients)-5} more entries\n")
 
         return result
-
-
-    def dict_to_DataFrame(self, formatted_dict: dict[str, list[tuple[tuple[int, int], float]]], timesteps: int)-> pp.DataFrame:
-        """
-        Convert the dictionary to a DataFrame
-        Args:
-            formatted_dict: dictionary with variable names as keys and lists of tuples as values
-                Each tuple contains a sample index, -time lag in days, and coefficient
-            timesteps: number of timesteps to include in the DataFrame
-        Returns:
-            dataframe: DataFrame with the time series data
-        """
-        data, _ = toys.var_process(formatted_dict, T = timesteps)
-        print(data.shape)
-        dataframe = pp.DataFrame(data)
-
-        return dataframe
     
 
-    def compute_pcmci_links(self, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
+    def preprocess_json_to_df(
+        json_file_path: str,
+        target_timestep: int = -1,
+        total_timesteps: int = 40,
+        analysis_mode: str = "multiple"
+    ) -> Tuple[np.ndarray, List[str]]:
+            """
+            Reads JSON file where each line is represented as:
+            {'local_variables'  : {var_name: [T-1 value], ...}
+             'ocis'             : {var_name: [T-1 value], ...}
+             'target'           : binary
+            }
+
+            Convert to data with T = total_timesteps rows [obs, T, V]
+            
+            Returns:
+                df: DataFrame
+                    Tigramite DataFrame
+                var_names: list[str]
+                    Name of the V columns, as in the same order as in the array
+            """
+
+            panels = []
+            for line in open(json_file_path, 'r'):
+                rec = json.loads(line)
+                # Merge all measured series into one dict
+                ts = {**rec['local_variables'], **rec['ocis']}
+                # Fix a stable ordering, then append the 'target' column last
+                var_names = sorted(ts.keys()) + ['target']
+                N = len(var_names)
+
+                # Prepare an array of shape (T, N), filled with NaN
+                arr = np.full((total_timesteps, N), np.nan, dtype=float)
+
+                # Fill in each column
+                for j, var in enumerate(var_names):
+                    if var == 'target':
+                        # Allow negative index so -1 => last row, -2 => second‐to‐last, etc.
+                        idx = target_timestep % total_timesteps
+                        arr[idx, j] = rec['target']
+                    else:
+                        series = np.asarray(ts[var], dtype=float)
+                        expected = total_timesteps - 1
+                        if series.shape[0] != expected:
+                            raise ValueError(
+                                f"Variable `{var}` has {series.shape[0]} steps; "
+                                f"expected {expected}"
+                            )
+                        # Fill rows 0..T-2 with the ascending‐time series
+                        arr[:expected, j] = series
+
+                panels.append(arr)
+
+            # Stack into shape (M, T, N)
+            data_array = np.stack(panels, axis=0)
+
+            # Create Tigramite DataFrame
+            pcmci_df = pp.DataFrame(
+                data=data_array,
+                var_names=var_names,
+                analysis_mode=analysis_mode
+            )
+
+
+            # Print example for verification
+            num_examples = min(3, data_array.shape[0])
+            for i in range(num_examples):
+                print(f"\n### Observation {i} (last 5 timesteps) =")
+                df_panel = pd.DataFrame(data_array[i], columns=var_names)
+                print(df_panel.tail())
+
+            return pcmci_df, var_names
+    
+    
+
+    def compute_pcmci_links(self, dataframe: pp.DataFrame, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
         """
         Run PCMCI to infer causal adjacency among time series variables.
         Args:
@@ -124,8 +182,6 @@ class AdjacencyMatrix:
             adj_matrix          : weighted adjacency matrix of shape (V, V)            
         """
         
-        dataframe = self.dataframe
-
         # Determine independence test
         if independence_test == "ParCorr":
             ind_test = it.ParCorr()
@@ -160,33 +216,30 @@ class AdjacencyMatrix:
         return link_matrix, val_matrix, adj_matrix
     
 
-    def __init__(self, json_file_path: str, max_timelag: int, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
+    def __init__(self, json_file_path: str, target_timestep: int = -1, total_timesteps: int = 40, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
         """
         Initialize the AdjacencyMatrix class
         Args:
             json_file_path: path to the JSON file containing the data
         """
         self.json_file_path = json_file_path
-        self.max_timelag = max_timelag
+        self.total_timesteps = total_timesteps
+        self.target_timestep = target_timestep
         self.ind_test = independence_test
         self.tau_max = tau_max
         self.pc_alpha = pc_alpha
 
-
-        self.link_matrix = None
-        self.val_matrix = None
-        self.adj_matrix = None
-
         # Preprocess the JSON file and convert to DataFrame
-        formatted_dict = self.preprocess_json(json_file_path)
-        self.varlist = list(formatted_dict.keys())
+        self.dataframe, self.varlist = self.preprocess_json_to_df(
+            json_file_path, 
+            target_timestep=target_timestep, 
+            total_timesteps=total_timesteps
+        )
         self.V = len(self.varlist)
         
-        # Convert the dictionary to a DataFrame
-        self.dataframe = self.dict_to_DataFrame(formatted_dict, T=self.max_timelag)
-
         # Calculate PCMCI matrices
         self.link_matrix, self.val_matrix, self.adj_matrix = self.compute_pcmci_links(
+            dataframe=self.dataframe,
             independence_test=self.ind_test,
             tau_max=self.tau_max,
             pc_alpha=self.pc_alpha
@@ -218,7 +271,7 @@ class AdjacencyMatrix:
         # Set all weights to 0 for the target variable
         masked_adj_matrix = matrix
 
-        masked_adj_matrix[target_index, :] = None
-        masked_adj_matrix[:, target_index] = None
+        masked_adj_matrix[target_index, :] = 0.0
+        masked_adj_matrix[:, target_index] = 0.0
         
         return masked_adj_matrix
