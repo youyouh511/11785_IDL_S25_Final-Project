@@ -194,7 +194,7 @@ class AdjacencyMatrix:
 
         else:
             print(f"Unknown independence test: {independence_test}", "defaulted to ParCorr")
-            ind_test = it.ParCorr()
+            ind_test = ParCorr()
     
         # Run PCMCI with data and independence test to derive links
         pcmci = PCMCI(dataframe=dataframe, cond_ind_test=ind_test, verbosity=0)
