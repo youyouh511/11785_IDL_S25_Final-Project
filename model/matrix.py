@@ -7,7 +7,9 @@ import json
 
 import tigramite.data_processing as pp
 from tigramite.pcmci import PCMCI
-import tigramite.independence_tests as it
+from tigramite.independence_tests.parcorr import ParCorr
+from tigramite.independence_tests.robust_parcorr import RobustParCorr
+from tigramite.independence_tests.gpdc_torch import GPDCtorch
 from tigramite.toymodels import structural_causal_processes as toys
 
 
@@ -99,77 +101,73 @@ class AdjacencyMatrix:
         target_timestep: int = -1,
         total_timesteps: int = 40,
         analysis_mode: str = "multiple"
-    ) -> Tuple[np.ndarray, List[str]]:
-            """
-            Reads JSON file where each line is represented as:
-            {'local_variables'  : {var_name: [T-1 value], ...}
-             'ocis'             : {var_name: [T-1 value], ...}
-             'target'           : binary
-            }
+    ) -> Tuple[pp.DataFrame, list[str]]:
+        """
+        Reads an NDJSON of records with
+        - rec['local_variables'][var] -> list of length T-1
+        - rec['ocis'][var]            -> list of length T-1
+        - rec['target']               -> scalar
 
-            Convert to data with T = total_timesteps rows [obs, T, V]
-            
-            Returns:
-                df: DataFrame
-                    Tigramite DataFrame
-                var_names: list[str]
-                    Name of the V columns, as in the same order as in the array
-            """
+        Builds a data array of shape (M, T, V+1) where the last channel is 'target'
+        placed at `target_timestep`, and masks all other missing values.
+        """
+        panels = []
+        var_names = None
 
-            panels = []
-            for line in open(json_file_path, 'r'):
-                rec = json.loads(line)
-                # Merge all measured series into one dict
-                ts = {**rec['local_variables'], **rec['ocis']}
-                # Fix a stable ordering, then append the 'target' column last
+        for line in open(json_file_path, 'r'):
+            rec = json.loads(line)
+
+            # 1) merge the time-series channels
+            ts = {**rec['local_variables'], **rec['ocis']}
+
+            # 2) determine var_names once (assume same keys for every record)
+            if var_names is None:
                 var_names = sorted(ts.keys()) + ['target']
-                N = len(var_names)
+            V = len(var_names)
+            T = total_timesteps
 
-                # Prepare an array of shape (T, N), filled with NaN
-                arr = np.full((total_timesteps, N), np.nan, dtype=float)
+            # 3) make an array full of NaNs
+            arr = np.full((T, V), np.nan, dtype=float)
 
-                # Fill in each column
-                for j, var in enumerate(var_names):
-                    if var == 'target':
-                        # Allow negative index so -1 => last row, -2 => second‐to‐last, etc.
-                        idx = target_timestep % total_timesteps
-                        arr[idx, j] = rec['target']
-                    else:
-                        series = np.asarray(ts[var], dtype=float)
-                        expected = total_timesteps - 1
-                        if series.shape[0] != expected:
-                            raise ValueError(
-                                f"Variable `{var}` has {series.shape[0]} steps; "
-                                f"expected {expected}"
-                            )
-                        # Fill rows 0..T-2 with the ascending‐time series
-                        arr[:expected, j] = series
+            # 4) fill all measured variables (columns 0..N-2)
+            expected_length = T - 1
+            for j, var in enumerate(var_names[:-1]):
+                series = np.asarray(ts[var], dtype=float)
+                if series.shape[0] != expected_length:
+                    raise ValueError(
+                        f"Variable `{var}` has {series.shape[0]} steps; expected {expected_length}"
+                    )
+                arr[:expected_length, j] = series
 
-                panels.append(arr)
+            # 5) fill the target in the last channel at the requested timestep
+            j_target = V - 1
+            idx = target_timestep % T
+            arr[idx, j_target] = float(rec['target'])
 
-            # Stack into shape (M, T, N)
-            data_array = np.stack(panels, axis=0)
+            panels.append(arr)
 
-            # Masking NaN
-            mask = np.isnan(data_array)
-            data_filled = np.nan_to_num(data_array, nan=0.0)
+        # 6) stack into (M, T, N)
+        data_array = np.stack(panels, axis=0)
 
-            # Create Tigramite DataFrame
-            pcmci_df = pp.DataFrame(
-                data=data_filled,
-                mask=mask,
-                var_names=var_names,
-                analysis_mode=analysis_mode
-            )
+        # 7) build mask & fill NaNs
+        mask = np.isnan(data_array)
+        data_filled = np.nan_to_num(data_array, nan=0.0)
 
-            # Print example for verification
-            num_examples = min(3, data_array.shape[0])
-            for i in range(num_examples):
-                print(f"\n### Masked observation {i} (last 5 timesteps) =")
-                df_panel = pd.DataFrame(data_array[i], columns=var_names)
-                print(df_panel.tail())
+        # 8) create Tigramite DataFrame
+        pcmci_df = pp.DataFrame(
+            data         = data_filled,
+            mask         = mask,
+            var_names    = var_names,
+            analysis_mode= analysis_mode
+        )
 
-            return pcmci_df, var_names
+        # 9) debug print: show last 5 timesteps (including your filled target)
+        for i in range(min(3, data_array.shape[0])):
+            print(f"\n### Observation {i} (last 5 timesteps) =")
+            df_panel = pd.DataFrame(data_array[i], columns=var_names)
+            print(df_panel.tail())
+
+        return pcmci_df, var_names
     
     
 
@@ -188,9 +186,12 @@ class AdjacencyMatrix:
         
         # Determine independence test
         if independence_test == "ParCorr":
-            ind_test = it.ParCorr()
-        elif independence_test == "GausCI":
-            ind_test = it.GausCI()
+            ind_test = ParCorr()
+        elif independence_test == "RobustParCorr":
+            ind_test = RobustParCorr()
+        elif independence_test == "GPDCtorch":
+            ind_test = GPDCtorch()
+
         else:
             print(f"Unknown independence test: {independence_test}", "defaulted to ParCorr")
             ind_test = it.ParCorr()
