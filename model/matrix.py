@@ -150,18 +150,22 @@ class AdjacencyMatrix:
             # Stack into shape (M, T, N)
             data_array = np.stack(panels, axis=0)
 
+            # Masking NaN
+            mask = np.isnan(data_array)
+            data_filled = np.nan_to_num(data_array, nan=0.0)
+
             # Create Tigramite DataFrame
             pcmci_df = pp.DataFrame(
-                data=data_array,
+                data=data_filled,
+                mask=mask,
                 var_names=var_names,
                 analysis_mode=analysis_mode
             )
 
-
             # Print example for verification
             num_examples = min(3, data_array.shape[0])
             for i in range(num_examples):
-                print(f"\n### Observation {i} (last 5 timesteps) =")
+                print(f"\n### Masked observation {i} (last 5 timesteps) =")
                 df_panel = pd.DataFrame(data_array[i], columns=var_names)
                 print(df_panel.tail())
 

@@ -2,5 +2,6 @@
 *.zip
 *.json
 *.jsonl
-__pychache__/*
+data/__pychache__/*
 datadownload_rev.ipynb
+seawsfire_v0.4.zarr/*
