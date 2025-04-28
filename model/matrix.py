@@ -97,6 +97,7 @@ class AdjacencyMatrix:
     
 
     def preprocess_json_to_df(
+        self,
         json_file_path: str,
         target_timestep: int = -1,
         total_timesteps: int = 40,
@@ -128,9 +129,11 @@ class AdjacencyMatrix:
 
             # 3) make an array full of NaNs
             arr = np.full((T, V), np.nan, dtype=float)
+            j_target = V - 1
+            arr[:, j_target] = 0.0
 
             # 4) fill all measured variables (columns 0..N-2)
-            expected_length = T - 1
+            expected_length = T
             for j, var in enumerate(var_names[:-1]):
                 series = np.asarray(ts[var], dtype=float)
                 if series.shape[0] != expected_length:
@@ -153,12 +156,16 @@ class AdjacencyMatrix:
         mask = np.isnan(data_array)
         data_filled = np.nan_to_num(data_array, nan=0.0)
 
+        # 7a) convert to dict
+        data_dict = {i: data_filled[i] for i in range(data_filled.shape[0])}
+        mask_dict = {i: mask[i]        for i in range(mask.shape[0])}
+
         # 8) create Tigramite DataFrame
-        pcmci_df = pp.DataFrame(
-            data         = data_filled,
-            mask         = mask,
+        self.dataframe = pp.DataFrame(
+            data         = data_dict,
+            mask         = mask_dict,
             var_names    = var_names,
-            analysis_mode= analysis_mode
+            analysis_mode='multiple'
         )
 
         # 9) debug print: show last 5 timesteps (including your filled target)
@@ -167,7 +174,7 @@ class AdjacencyMatrix:
             df_panel = pd.DataFrame(data_array[i], columns=var_names)
             print(df_panel.tail())
 
-        return pcmci_df, var_names
+        return self.dataframe, var_names
     
     
 
@@ -221,7 +228,7 @@ class AdjacencyMatrix:
         return link_matrix, val_matrix, adj_matrix
     
 
-    def __init__(self, json_file_path: str, target_timestep: int = -1, total_timesteps: int = 40, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
+    def __init__(self, json_file_path: str, target_timestep: int = -1, total_timesteps: int = 39, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
         """
         Initialize the AdjacencyMatrix class
         Args:
@@ -240,6 +247,22 @@ class AdjacencyMatrix:
             target_timestep=target_timestep, 
             total_timesteps=total_timesteps
         )
+
+        """# self.dataframe is your tigramite.data_processing.DataFrame
+        print("Variables:", self.dataframe.var_names)
+        print("Datasets keys:", self.dataframe.datasets)   # usually [0] for a single panel
+
+        for m in self.dataframe.datasets[:5]:
+            data = self.dataframe.values[m]
+            mask = self.dataframe.mask[m]
+
+            print(f"\n--- Dataset {m} (first 5 timesteps) ---")
+            df_data = pd.DataFrame(data, columns=self.dataframe.var_names)
+            print(df_data.head())
+
+            print(f"\n--- Mask for dataset {m} (True = originally NaN) ---")
+            df_mask = pd.DataFrame(mask, columns=self.dataframe.var_names)
+            print(df_mask.head())"""
         self.V = len(self.varlist)
         
         # Calculate PCMCI matrices
@@ -250,6 +273,7 @@ class AdjacencyMatrix:
             pc_alpha=self.pc_alpha
         )
     
+
 
     def normalize_adj_matrix(self, matrix):
         """
