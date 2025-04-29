@@ -21,162 +21,235 @@ class AdjacencyMatrix:
     Initialized with unnormalized adjacency matrices (link_matrix, val_matrix, adj_matrix)
     """ 
 
-    def preprocess_json_to_pnc(self, json_file_path: str, local_lag: int = 8, oci_lag: int = 31) -> dict[str, list[tuple[tuple[int, int], float]]]:
-        """
-        Preprocess JSON file to extract coefficients and time lags
-        Args:
-            json_file_path: path to the JSON file containing the data
-            local_lag: time lag for local variables (default is 8 days)
-            oci_lag: time lag for OCI variables (default is 31 days)
-            Convert JSON data to a dictionary with the format:
-            { 
-                variable1: [((sample_index, -time_lag_days), coefficient), ...],
-                variable2: [((sample_index, -time_lag_days), coefficient), ...], 
-                ...
-                target: [((sample_index, 0), value), ...],
-            }
-        Returns:
-            result: dictionary with variable names as keys and lists of tuples as values
-                Each tuple contains a sample index, -time lag in days, and coefficient
-        """
+## Conver to parent neighbor coefficient style
+    # def preprocess_json_to_pnc(self, json_file_path: str, local_lag: int = 8, oci_lag: int = 31) -> dict[str, list[tuple[tuple[int, int], float]]]:
+    #     """
+    #     Preprocess JSON file to extract coefficients and time lags
+    #     Args:
+    #         json_file_path: path to the JSON file containing the data
+    #         local_lag: time lag for local variables (default is 8 days)
+    #         oci_lag: time lag for OCI variables (default is 31 days)
+    #         Convert JSON data to a dictionary with the format:
+    #         { 
+    #             variable1: [((sample_index, -time_lag_days), coefficient), ...],
+    #             variable2: [((sample_index, -time_lag_days), coefficient), ...], 
+    #             ...
+    #             target: [((sample_index, 0), value), ...],
+    #         }
+    #     Returns:
+    #         result: dictionary with variable names as keys and lists of tuples as values
+    #             Each tuple contains a sample index, -time lag in days, and coefficient
+    #     """
 
-        result = {}
+    #     result = {}
         
-        # Check if file exists
-        if not os.path.exists(json_file_path):
-            raise FileNotFoundError(f"File not found: {json_file_path}")
+    #     # Check if file exists
+    #     if not os.path.exists(json_file_path):
+    #         raise FileNotFoundError(f"File not found: {json_file_path}")
         
-        # Read the JSON file
-        with open(json_file_path, 'r') as file:
-            json_data = file.read()
+    #     # Read the JSON file
+    #     with open(json_file_path, 'r') as file:
+    #         json_data = file.read()
         
-        # Process one sample at a time to extract coefficients
-        samples = json_data.strip().split('\n')
+    #     # Process one sample at a time to extract coefficients
+    #     samples = json_data.strip().split('\n')
         
-        for sample_idx, sample in enumerate(samples):
-            data = json.loads(sample)
+    #     for sample_idx, sample in enumerate(samples):
+    #         data = json.loads(sample)
             
-            # Process local variables (with 39 time lags * 8 days each)
-            for var_name, values in data['local_variables'].items():
-                if var_name not in result:
-                    result[var_name] = []
+    #         # Process local variables (with 39 time lags * 8 days each)
+    #         for var_name, values in data['local_variables'].items():
+    #             if var_name not in result:
+    #                 result[var_name] = []
                 
-                # For each value in the time series, calculate the time lag in days
-                for time_lag_idx, coefficient in enumerate(values):
-                    # Time lag in days: each unit is 8 days
-                    time_lag_days = -(time_lag_idx + 1) * local_lag
-                    result[var_name].append(((sample_idx, time_lag_days), coefficient))
+    #             # For each value in the time series, calculate the time lag in days
+    #             for time_lag_idx, coefficient in enumerate(values):
+    #                 # Time lag in days: each unit is 8 days
+    #                 time_lag_days = -(time_lag_idx + 1) * local_lag
+    #                 result[var_name].append(((sample_idx, time_lag_days), coefficient))
             
-            # Process OCI variables (with 10 time lags * 1 month each)
-            for var_name, values in data['ocis'].items():
-                if var_name not in result:
-                    result[var_name] = []
+    #         # Process OCI variables (with 10 time lags * 1 month each)
+    #         for var_name, values in data['ocis'].items():
+    #             if var_name not in result:
+    #                 result[var_name] = []
                 
-                # For each value in the time series, calculate the time lag in days
-                for time_lag_idx, coefficient in enumerate(values):
-                    # Time lag in days: each unit is 30 days (1 month)
-                    time_lag_days = -(time_lag_idx + 1) * oci_lag
-                    result[var_name].append(((sample_idx, time_lag_days), coefficient))
+    #             # For each value in the time series, calculate the time lag in days
+    #             for time_lag_idx, coefficient in enumerate(values):
+    #                 # Time lag in days: each unit is 30 days (1 month)
+    #                 time_lag_days = -(time_lag_idx + 1) * oci_lag
+    #                 result[var_name].append(((sample_idx, time_lag_days), coefficient))
             
-            # Process target variable (with time lag of 0 days)
-            if 'target' in data:
-                if 'target' not in result:
-                    result['target'] = []
+    #         # Process target variable (with time lag of 0 days)
+    #         if 'target' in data:
+    #             if 'target' not in result:
+    #                 result['target'] = []
                 
-                # Add target with time lag of 0 (current value)
-                result['target'].append(((sample_idx, 0), data['target']))
+    #             # Add target with time lag of 0 (current value)
+    #             result['target'].append(((sample_idx, 0), data['target']))
         
-        # Print the dictionary in a readable format
-        for var_name, coefficients in result.items():
-            print(f"{var_name}:")
-            for i, ((sample_idx, time_lag), coef) in enumerate(coefficients[:5]):  # Show first 5 entries
-                print(f"  {i+1}. ((sample_idx={sample_idx}, time_lag={time_lag}), coefficient={coef})")
-            print(f"  ... and {len(coefficients)-5} more entries\n")
+    #     # Print the dictionary in a readable format
+    #     for var_name, coefficients in result.items():
+    #         print(f"{var_name}:")
+    #         for i, ((sample_idx, time_lag), coef) in enumerate(coefficients[:5]):  # Show first 5 entries
+    #             print(f"  {i+1}. ((sample_idx={sample_idx}, time_lag={time_lag}), coefficient={coef})")
+    #         print(f"  ... and {len(coefficients)-5} more entries\n")
 
-        return result
+    #     return result
     
 
+## 40 timestep sample version
+    # def preprocess_json_to_df(
+    #     self,
+    #     json_file_path: str,
+    #     target_timestep: int = -1,
+    #     total_timesteps: int = 40,
+    #     analysis_mode: str = "multiple"
+    # ) -> Tuple[pp.DataFrame, list[str]]:
+    #     """
+    #     Reads an NDJSON of records with
+    #     - rec['local_variables'][var] -> list of length T-1
+    #     - rec['ocis'][var]            -> list of length T-1
+    #     - rec['target']               -> scalar
+
+    #     Builds a data array of shape (M, T, V+1) where the last channel is 'target'
+    #     placed at `target_timestep`, and masks all other missing values.
+    #     """
+    #     panels = []
+    #     var_names = None
+
+    #     for line in open(json_file_path, 'r'):
+    #         rec = json.loads(line)
+
+    #         # 1) merge the time-series channels
+    #         ts = {**rec['local_variables'], **rec['ocis']}
+
+    #         # 2) determine var_names once (assume same keys for every record)
+    #         if var_names is None:
+    #             var_names = sorted(ts.keys()) + ['target']
+    #         V = len(var_names)
+    #         T = total_timesteps
+
+    #         # 3) make an array full of NaNs
+    #         arr = np.full((T, V), np.nan, dtype=float)
+    #         j_target = V - 1
+    #         arr[:, j_target] = 0.0
+
+    #         # 4) fill all measured variables (columns 0..N-2)
+    #         expected_length = T - 1
+    #         for j, var in enumerate(var_names[:-1]):
+    #             series = np.asarray(ts[var], dtype=float)
+    #             if series.shape[0] != expected_length:
+    #                 raise ValueError(
+    #                     f"Variable `{var}` has {series.shape[0]} steps; expected {expected_length}"
+    #                 )
+    #             arr[:expected_length, j] = series
+
+    #         # 5) fill the target in the last channel at the requested timestep
+    #         j_target = V - 1
+    #         idx = target_timestep % T
+    #         arr[idx, j_target] = float(rec['target'])
+
+    #         panels.append(arr)
+
+    #     # 6) stack into (M, T, N)
+    #     data_array = np.stack(panels, axis=0)
+
+    #     # 7) build mask & fill NaNs
+    #     mask = np.isnan(data_array)
+    #     data_filled = np.nan_to_num(data_array, nan=0.0)
+
+    #     # 7a) convert to dict
+    #     data_dict = {i: data_filled[i] for i in range(data_filled.shape[0])}
+    #     mask_dict = {i: mask[i]        for i in range(mask.shape[0])}
+
+    #     # 8) create Tigramite DataFrame
+    #     self.dataframe = pp.DataFrame(
+    #         data         = data_dict,
+    #         mask         = mask_dict,
+    #         var_names    = var_names,
+    #         analysis_mode='multiple'
+    #     )
+
+    #     # 9) debug print: show last 5 timesteps (including your filled target)
+    #     for i in range(min(3, data_array.shape[0])):
+    #         print(f"\n### Observation {i} (last 5 timesteps) =")
+    #         df_panel = pd.DataFrame(data_array[i], columns=var_names)
+    #         print(df_panel.tail())
+
+    #     return self.dataframe, var_names
+    
+    
+# Full timeseries sample version
     def preprocess_json_to_df(
         self,
         json_file_path: str,
-        target_timestep: int = -1,
-        total_timesteps: int = 40,
         analysis_mode: str = "multiple"
-    ) -> Tuple[pp.DataFrame, list[str]]:
+    ) -> Tuple[pp.DataFrame, List[str]]:
         """
-        Reads an NDJSON of records with
-        - rec['local_variables'][var] -> list of length T-1
-        - rec['ocis'][var]            -> list of length T-1
-        - rec['target']               -> scalar
+        Read an NDJSON where each record has
+          - rec['local_variables'][var] → list of length T
+          - rec['ocis'][var]            → list of length T
+          - rec['target']               → list of length T (0/1)
 
-        Builds a data array of shape (M, T, V+1) where the last channel is 'target'
-        placed at `target_timestep`, and masks all other missing values.
+        Returns:
+          - a Tigramite DataFrame with M panels of shape (T × V)
+          - var_names: the list of V variable names, including 'target'
         """
         panels = []
         var_names = None
+        T = None
 
-        for line in open(json_file_path, 'r'):
-            rec = json.loads(line)
+        with open(json_file_path, 'r') as f:
+            for line in f:
+                rec = json.loads(line)
+                # merge all series into one dict
+                ts = {**rec['local_variables'], **rec['ocis'], 'target': rec['target']}
 
-            # 1) merge the time-series channels
-            ts = {**rec['local_variables'], **rec['ocis']}
+                # on first line infer T and var order
+                if var_names is None:
+                    var_names = sorted(ts.keys())
+                    T = len(ts['target'])
 
-            # 2) determine var_names once (assume same keys for every record)
-            if var_names is None:
-                var_names = sorted(ts.keys()) + ['target']
-            V = len(var_names)
-            T = total_timesteps
+                # sanity check length
+                if len(ts['target']) != T:
+                    raise ValueError(f"Inconsistent length {len(ts['target'])} vs {T}")
 
-            # 3) make an array full of NaNs
-            arr = np.full((T, V), np.nan, dtype=float)
-            j_target = V - 1
-            arr[:, j_target] = 0.0
+                # build array (T × V)
+                V = len(var_names)
+                arr = np.zeros((T, V), dtype=float)
+                for j, var in enumerate(var_names):
+                    series = np.asarray(ts[var], dtype=float)
+                    if series.shape[0] != T:
+                        raise ValueError(f"Var `{var}` has len {series.shape[0]}; expected {T}")
+                    arr[:, j] = series
 
-            # 4) fill all measured variables (columns 0..N-2)
-            expected_length = T - 1
-            for j, var in enumerate(var_names[:-1]):
-                series = np.asarray(ts[var], dtype=float)
-                if series.shape[0] != expected_length:
-                    raise ValueError(
-                        f"Variable `{var}` has {series.shape[0]} steps; expected {expected_length}"
-                    )
-                arr[:expected_length, j] = series
+                panels.append(arr)
 
-            # 5) fill the target in the last channel at the requested timestep
-            j_target = V - 1
-            idx = target_timestep % T
-            arr[idx, j_target] = float(rec['target'])
-
-            panels.append(arr)
-
-        # 6) stack into (M, T, N)
+        # stack into (M, T, V)
         data_array = np.stack(panels, axis=0)
+        # no missing values in full‐series → all‐False mask
+        mask = np.zeros_like(data_array, dtype=bool)
 
-        # 7) build mask & fill NaNs
-        mask = np.isnan(data_array)
-        data_filled = np.nan_to_num(data_array, nan=0.0)
+        # convert to dict-of-panels
+        data_dict = {m: data_array[m] for m in range(data_array.shape[0])}
+        mask_dict = {m: mask[m]        for m in range(mask.shape[0])}
 
-        # 7a) convert to dict
-        data_dict = {i: data_filled[i] for i in range(data_filled.shape[0])}
-        mask_dict = {i: mask[i]        for i in range(mask.shape[0])}
-
-        # 8) create Tigramite DataFrame
-        self.dataframe = pp.DataFrame(
-            data         = data_dict,
-            mask         = mask_dict,
-            var_names    = var_names,
-            analysis_mode='multiple'
+        # create Tigramite DataFrame
+        pcmci_df = pp.DataFrame(
+            data          = data_dict,
+            mask          = mask_dict,
+            var_names     = var_names,
+            analysis_mode = analysis_mode
         )
 
-        # 9) debug print: show last 5 timesteps (including your filled target)
-        for i in range(min(3, data_array.shape[0])):
-            print(f"\n### Observation {i} (last 5 timesteps) =")
-            df_panel = pd.DataFrame(data_array[i], columns=var_names)
-            print(df_panel.tail())
+        # debug print
+        for m in range(min(3, data_array.shape[0])):
+            print(f"\n### Panel {m} last 5 rows ###")
+            print(pd.DataFrame(data_array[m], columns=var_names).tail())
 
-        return self.dataframe, var_names
-    
-    
+        return pcmci_df, var_names
+
+
 
     def compute_pcmci_links(
         self,
@@ -188,7 +261,7 @@ class AdjacencyMatrix:
         use_gpu: bool = True,          # whether to offload GPDCtorch to GPU
         gpu_device: str = "cuda:0"     # which CUDA device
     ):
-        # 1) pick your cond. independence test
+        # 1) Choose cond ind test
         if independence_test == "ParCorr":
             # ParCorr can spawn multiple worker processes
             ind_test = ParCorr()
@@ -205,18 +278,21 @@ class AdjacencyMatrix:
             ind_test = ParCorr()
 
         # 2) build and run PCMCI
+        print("preping pcmci...")
         pcmci = PCMCI(
             dataframe   = dataframe,
             cond_ind_test = ind_test,
         )
 
-        # This is the expensive step; now parallelized
+        ### Time consuming
+        print("running pcmci...")
         results = pcmci.run_pcmci(
             tau_max = tau_max,
             pc_alpha= pc_alpha
         )
 
         # 3) extract what you need
+        print("extracting links...")
         link_matrix = (results["p_matrix"] <= pc_alpha).astype(int)
         val_matrix  = results["val_matrix"]
         V = link_matrix.shape[0]
@@ -235,24 +311,21 @@ class AdjacencyMatrix:
         return link_matrix, results["p_matrix"], val_matrix, adj_matrix
     
 
-    def __init__(self, json_file_path: str, target_timestep: int = -1, total_timesteps: int = 40, independence_test: str = "ParCorr", tau_max: int = 19, pc_alpha: float = 0.05):
+    def __init__(self, json_file_path: str, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05, analysis_mode: str = "multiple"):
         """
         Initialize the AdjacencyMatrix class
         Args:
             json_file_path: path to the JSON file containing the data
         """
         self.json_file_path = json_file_path
-        self.total_timesteps = total_timesteps
-        self.target_timestep = target_timestep
         self.ind_test = independence_test
         self.tau_max = tau_max
         self.pc_alpha = pc_alpha
 
         # Preprocess the JSON file and convert to DataFrame
         self.dataframe, self.varlist = self.preprocess_json_to_df(
-            json_file_path, 
-            target_timestep=target_timestep, 
-            total_timesteps=total_timesteps
+            json_file_path,
+            analysis_mode=analysis_mode
         )
 
         """# self.dataframe is your tigramite.data_processing.DataFrame
