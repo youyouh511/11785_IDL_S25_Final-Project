@@ -191,26 +191,23 @@ class AdjacencyMatrix:
         # 1) pick your cond. independence test
         if independence_test == "ParCorr":
             # ParCorr can spawn multiple worker processes
-            ind_test = ParCorr(n_jobs=n_jobs)
+            ind_test = ParCorr()
         elif independence_test == "RobustParCorr":
-            ind_test = RobustParCorr(n_jobs=n_jobs)
+            ind_test = RobustParCorr()
         elif independence_test == "GPDCtorch":
             # GPDCtorch will run on GPU if you tell it to
             ind_test = GPDCtorch(
                 cuda=use_gpu,
                 gpu_device=gpu_device,
-                # GPDCtorch internally will use the GPU’s parallelism,
-                # so we don’t need n_jobs here
             )
         else:
             print(f"Unknown test {independence_test}; defaulting to ParCorr")
-            ind_test = ParCorr(n_jobs=n_jobs)
+            ind_test = ParCorr()
 
         # 2) build and run PCMCI
         pcmci = PCMCI(
             dataframe   = dataframe,
             cond_ind_test = ind_test,
-            verbosity   = 0
         )
 
         # This is the expensive step; now parallelized
