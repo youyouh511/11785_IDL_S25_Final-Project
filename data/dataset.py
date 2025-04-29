@@ -47,7 +47,7 @@ class JsonFireDataset(Dataset):
         for k in self.oci_keys:
             seqs.append(rec['ocis'][k])
 
-        # stack → shape (channel, L)
+        # stack (channel, L)
         x = torch.tensor(seqs, dtype=torch.float32)
         y = torch.tensor(rec['target'], dtype=torch.long)
         return x, y

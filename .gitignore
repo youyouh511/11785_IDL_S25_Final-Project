@@ -5,3 +5,6 @@
 data/__pychache__/*
 datadownload_rev.ipynb
 seawsfire_v0.4.zarr/*
+ENTER/
+seasfire_v0.4.zarr/
+*.sh

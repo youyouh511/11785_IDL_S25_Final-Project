@@ -133,7 +133,7 @@ class AdjacencyMatrix:
             arr[:, j_target] = 0.0
 
             # 4) fill all measured variables (columns 0..N-2)
-            expected_length = T
+            expected_length = T - 1
             for j, var in enumerate(var_names[:-1]):
                 series = np.asarray(ts[var], dtype=float)
                 if series.shape[0] != expected_length:
@@ -178,57 +178,67 @@ class AdjacencyMatrix:
     
     
 
-    def compute_pcmci_links(self, dataframe: pp.DataFrame, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
-        """
-        Run PCMCI to infer causal adjacency among time series variables.
-        Args:
-            independence_test   : type of independence test to use (e.g., "ParCorr", used in baseline)
-            tau_max             : max lag in timesteps for causal inference (e.g., 23 is chosen for 6 months of 8-day temporal resampling)
-            pc_alpha            : significance threshold for link selection
-        Returns:
-            link_matrix         : binary matrix of shape (V, V, tau_max) indicating causal links (above pc_alpha)
-            val_matrix          : matrix of coefficients of shape (V, V, tau_max)
-            adj_matrix          : weighted adjacency matrix of shape (V, V)            
-        """
-        
-        # Determine independence test
+    def compute_pcmci_links(
+        self,
+        dataframe: pp.DataFrame,
+        tau_max: int,
+        pc_alpha: float,
+        independence_test: str = "ParCorr",
+        n_jobs: int = 4,               # number of CPU cores to use
+        use_gpu: bool = True,          # whether to offload GPDCtorch to GPU
+        gpu_device: str = "cuda:0"     # which CUDA device
+    ):
+        # 1) pick your cond. independence test
         if independence_test == "ParCorr":
-            ind_test = ParCorr()
+            # ParCorr can spawn multiple worker processes
+            ind_test = ParCorr(n_jobs=n_jobs)
         elif independence_test == "RobustParCorr":
-            ind_test = RobustParCorr()
+            ind_test = RobustParCorr(n_jobs=n_jobs)
         elif independence_test == "GPDCtorch":
-            ind_test = GPDCtorch()
-
+            # GPDCtorch will run on GPU if you tell it to
+            ind_test = GPDCtorch(
+                cuda=use_gpu,
+                gpu_device=gpu_device,
+                # GPDCtorch internally will use the GPU’s parallelism,
+                # so we don’t need n_jobs here
+            )
         else:
-            print(f"Unknown independence test: {independence_test}", "defaulted to ParCorr")
-            ind_test = ParCorr()
-    
-        # Run PCMCI with data and independence test to derive links
-        pcmci = PCMCI(dataframe=dataframe, cond_ind_test=ind_test, verbosity=0)
-        results = pcmci.run_pcmci(tau_max=tau_max, pc_alpha=pc_alpha)
+            print(f"Unknown test {independence_test}; defaulting to ParCorr")
+            ind_test = ParCorr(n_jobs=n_jobs)
 
-        link_matrix = results['link_matrix']   # binary
-        val_matrix = results['val_matrix']     # coefficients
-        
-        # Build weighted matrices (binary and weighted)
-        adj_matrix = np.zeros((self.V, self.V), dtype=float)
-        for i in range(self.V):
-            for j in range(self.V):
+        # 2) build and run PCMCI
+        pcmci = PCMCI(
+            dataframe   = dataframe,
+            cond_ind_test = ind_test,
+            verbosity   = 0
+        )
+
+        # This is the expensive step; now parallelized
+        results = pcmci.run_pcmci(
+            tau_max = tau_max,
+            pc_alpha= pc_alpha
+        )
+
+        # 3) extract what you need
+        link_matrix = (results["p_matrix"] <= pc_alpha).astype(int)
+        val_matrix  = results["val_matrix"]
+        V = link_matrix.shape[0]
+
+        adj_matrix = np.zeros((V, V), dtype=float)
+        for i in range(V):
+            for j in range(V):
                 if i == j:
                     continue
+                sig = np.where(link_matrix[i, j, :] == 1)[0]
+                if sig.size:
+                    coeffs   = val_matrix[i, j, sig]
+                    best_lag = sig[np.argmax(np.abs(coeffs))]
+                    adj_matrix[i, j] = val_matrix[i, j, best_lag]
 
-                # Find lags with significant links
-                sig_lags = np.where(link_matrix[i, j, :] != 0)[0]
-                if sig_lags.size > 0:
-                    # Select lag with maximum magnitutde coefficient (positive or negative)
-                    coeffs = val_matrix[i, j, sig_lags]
-                    max_index = sig_lags[np.argmax(np.abs(coeffs))]
-                    adj_matrix[i, j] = val_matrix[i, j, max_index]
-        
-        return link_matrix, val_matrix, adj_matrix
+        return link_matrix, results["p_matrix"], val_matrix, adj_matrix
     
 
-    def __init__(self, json_file_path: str, target_timestep: int = -1, total_timesteps: int = 39, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05):
+    def __init__(self, json_file_path: str, target_timestep: int = -1, total_timesteps: int = 40, independence_test: str = "ParCorr", tau_max: int = 19, pc_alpha: float = 0.05):
         """
         Initialize the AdjacencyMatrix class
         Args:
@@ -266,7 +276,7 @@ class AdjacencyMatrix:
         self.V = len(self.varlist)
         
         # Calculate PCMCI matrices
-        self.link_matrix, self.val_matrix, self.adj_matrix = self.compute_pcmci_links(
+        self.p_matrix, self.val_matrix, self.adj_matrix = self.compute_pcmci_links(
             dataframe=self.dataframe,
             independence_test=self.ind_test,
             tau_max=self.tau_max,
