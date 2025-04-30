@@ -9,3 +9,7 @@ seasfire_v0.4.zarr/
 *.sh
 *.pyc
 *.jsonl
+*.csv
+*.npz
+*.npy
+*.png

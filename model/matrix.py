@@ -448,7 +448,7 @@ class AdjacencyMatrix:
 
         return output
         
-
+    @staticmethod
     def save_matrix(
         matrix: np.ndarray,
         filepath: str
