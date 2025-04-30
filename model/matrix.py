@@ -1,9 +1,9 @@
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Union
 import numpy as np
 import pandas as pd
-import torch
 import os
 import json
+from pathlib import Path
 
 import tigramite.data_processing as pp
 from tigramite.pcmci import PCMCI
@@ -178,8 +178,6 @@ class AdjacencyMatrix:
 
     #     return self.dataframe, var_names
     
-    
-# Full timeseries sample version
     def preprocess_json_to_df(
         self,
         json_file_path: str,
@@ -267,8 +265,7 @@ class AdjacencyMatrix:
         elif independence_test == "RobustParCorr":
             ind_test = RobustParCorr()
         elif independence_test == "GPDCtorch":
-            # GPDCtorch will run on GPU if you tell it to
-            ind_test = GPDCtorch()
+            ind_test = GPDCtorch(verbosity=1)
         else:
             print(f"Unknown test {independence_test}; defaulting to ParCorr")
             ind_test = ParCorr()
@@ -278,33 +275,21 @@ class AdjacencyMatrix:
         pcmci = PCMCI(
             dataframe   = dataframe,
             cond_ind_test = ind_test,
+            verbosity=2,
         )
 
         ### Time consuming
         print("running pcmci...")
         results = pcmci.run_pcmci(
             tau_max = tau_max,
-            pc_alpha= pc_alpha
+            pc_alpha= pc_alpha,
         )
 
         # 3) extract what you need
         print("extracting links...")
-        link_matrix = (results["p_matrix"] <= pc_alpha).astype(int)
-        val_matrix  = results["val_matrix"]
-        V = link_matrix.shape[0]
+        link_matrix = (results["p_matrix"] <= pc_alpha).astype(bool)
 
-        adj_matrix = np.zeros((V, V), dtype=float)
-        for i in range(V):
-            for j in range(V):
-                if i == j:
-                    continue
-                sig = np.where(link_matrix[i, j, :] == 1)[0]
-                if sig.size:
-                    coeffs   = val_matrix[i, j, sig]
-                    best_lag = sig[np.argmax(np.abs(coeffs))]
-                    adj_matrix[i, j] = val_matrix[i, j, best_lag]
-
-        return link_matrix, results["p_matrix"], val_matrix, adj_matrix
+        return link_matrix, results["p_matrix"], results["val_matrix"]
     
 
     def __init__(self, json_file_path: str, independence_test: str = "ParCorr", tau_max: int = 23, pc_alpha: float = 0.05, analysis_mode: str = "multiple"):
@@ -342,41 +327,247 @@ class AdjacencyMatrix:
         self.V = len(self.varlist)
         
         # Calculate PCMCI matrices
-        self.p_matrix, self.val_matrix, self.adj_matrix = self.compute_pcmci_links(
+        self.link_matrix, self.p_matrix, self.val_matrix = self.compute_pcmci_links(
             dataframe=self.dataframe,
             independence_test=self.ind_test,
             tau_max=self.tau_max,
             pc_alpha=self.pc_alpha,
         )
+
+
+    def reduce_lag_matrix(
+        self,
+        matrix: np.ndarray,
+        method: str = "mean"
+    ) -> np.ndarray:
+        """
+        Collapse a 3-D (V*V*τ) matrix into 2-D (V*V) by mean/max/min.
+        If already 2-D, returns a copy unchanged.
+        """
+        if matrix.ndim == 2:
+            return matrix.copy()
+        if matrix.ndim != 3:
+            raise ValueError(f"Expected 2-D or 3-D array, got {matrix.ndim}-D")
+        m = method.lower()
+        if m in ("mean", "average"):
+            return matrix.mean(axis=2)
+        elif m == "max":
+            return matrix.max(axis=2)
+        elif m == "min":
+            return matrix.min(axis=2)
+        else:
+            raise ValueError("method must be 'mean', 'max' or 'min'")
+
+
+    def normalize_adj_matrix(self, matrix: np.ndarray) -> np.ndarray:
+        """
+        Row-normalize so each row sums to 1, then zero the diagonal.
+        """
+        mat = matrix.astype(float)
+        row_sums = np.abs(mat).sum(axis=1, keepdims=True)
+        # avoid divide by zero
+        row_sums[row_sums == 0] = 1.0
+        mat = mat / row_sums
+        np.fill_diagonal(mat, 0.0)
+        return mat
+
+
+    def mask_variable(
+        self,
+        matrix: np.ndarray,
+        target_var: str = "target"
+    ) -> tuple[np.ndarray, list[str]]:
+        """
+        Remove the given variable’s row and column from a square adjacency matrix,
+        and drop it from self.varlist.
+
+        Parameters
+        ----------
+        matrix : np.ndarray
+            A (V×V) adjacency matrix.
+        target_var : str
+            Name of the variable to remove.
+
+        Returns
+        -------
+        new_matrix : np.ndarray
+            A (V-1)×(V-1) adjacency matrix with that variable removed.
+        new_varlist : list[str]
+            The updated varlist (length V-1).
+        """
+        if target_var not in self.varlist:
+            raise ValueError(f"Variable '{target_var}' not in varlist")
+        idx = self.varlist.index(target_var)
+
+        # 1) delete the row
+        mat = np.delete(matrix, idx, axis=0)
+        # 2) delete the column
+        mat = np.delete(mat, idx, axis=1)
+
+        # 3) drop target from varlist
+        new_vars = [v for v in self.varlist if v != target_var]
+
+        return mat, new_vars
+
+
+    def gen_adj_matrix(
+        self,
+        source: str = "val",
+        collapse_method: str = "mean",
+        normalize: bool = True,
+        mask_target: str | None = "target",
+        only_significant: bool = True
+    ):
+        # 1) pick the 3D tensor
+        if source == "val":
+            mat3 = self.val_matrix.copy()
+            if only_significant:
+                mat3 *= self.link_matrix   # zero out non‐significant lags
+        elif source == "link":
+            mat3 = self.link_matrix.astype(float)
+        elif source == "p":
+            mat3 = self.p_matrix
+        else:
+            raise ValueError("source must be 'val','link' or 'p'")
+
+        # 2) collapse to 2D
+        adj2d = self.reduce_lag_matrix(mat3, collapse_method)
+        output = adj2d
+
+        # 3) normalize if wanted
+        if normalize:
+            adj2d = self.normalize_adj_matrix(adj2d)
+            output = adj2d
+
+        # 4) mask out the target variable
+        if mask_target is not None:
+            adj2d, new_vars = self.mask_variable(adj2d, mask_target)
+            output = (adj2d, new_vars)
+
+        return output
     
+    def from_json(cls, path):
+        import json
+        arr = np.array(json.load(open(path)))
+        return cls(arr)
+        
+
+    def save_matrix(
+        matrix: np.ndarray,
+        filepath: str
+    ) -> None:
+        """
+        Save a 2-D or 3-D adjacency matrix to disk in a “readable” format:
+        - .csv (only for 2D)
+        - .npy (only for 2D)
+        - .npz (for 2D or 3D)
+
+        Parameters
+        ----------
+        adj : np.ndarray
+            The matrix to save.
+        filepath : str
+            Path including extension. Supported:
+            - .csv  → saved with comma delimiter (only for 2D)
+            - .npy  → NumPy .npy binary (only for 2D)
+            - .npz  → NumPy .npz compressed archive (matrix stored under key "matrix")
+            If no supported extension is given, ".npz" will be appended.
+        """
+        base, ext = os.path.splitext(filepath)
+        ext = ext.lower()
+
+        if ext == ".csv":
+            if matrix.ndim != 2:
+                raise ValueError("CSV only supports 2-D matrices")
+            np.savetxt(filepath, matrix, delimiter=",")
+        elif ext == ".npy":
+            if matrix.ndim != 2:
+                raise ValueError("`.npy` only supports 2-D; use `.npz` for 3-D")
+            np.save(filepath, matrix)
+        elif ext == ".npz":
+            np.savez_compressed(filepath, matrix=matrix)
+        else:
+            # default to .npz
+            np.savez_compressed(base + ".npz", matrix=matrix)
 
 
-    def normalize_adj_matrix(self, matrix):
+    @staticmethod
+    def load_matrix(
+        filepath: str
+    ) -> np.ndarray:
         """
-        Normalize the adjacency matrix to sum to 1
+        Load a matrix previously saved with `save_matrix`.
+
+        Parameters
+        ----------
+        filepath : str
+            Path to .csv, .npy, or .npz file.
+
+        Returns
+        -------
+        np.ndarray
+            The loaded adjacency matrix (2-D or 3-D).
         """
-        # Normalize the weight matrix
-        norm_adj_matrix = matrix / np.sum(np.abs(matrix), axis=1, keepdims=True)
-        
-        # Set diagonal to 0
-        np.fill_diagonal(norm_adj_matrix, 0)
-        
-        return norm_adj_matrix
+        base, ext = os.path.splitext(filepath)
+        ext = ext.lower()
+
+        if ext == ".csv":
+            mat = np.loadtxt(filepath, delimiter=",")
+        elif ext == ".npy":
+            mat = np.load(filepath)
+        elif ext == ".json":
+            with open(filepath, 'r') as f:
+                data = json.load(f)
+            arr = data.get("matrix")
+            if arr is None:
+                raise ValueError(f"{filepath!r} find no matrix key, keys={list(data.keys())}")
+            mat = np.array(arr, dtype=float)
+        elif ext == ".npz":
+            data = np.load(filepath, allow_pickle=True)
+            mat  = np.array(data["matrix"], dtype=float)
+        else:
+            raise ValueError(f"Unsupported extension {ext!r}")
+
+        return mat
+
+
+    @staticmethod
+    def sample_json_file(
+        input_path: Union[str, Path],
+        output_path: Union[str, Path],
+        subset_frac: float = 1.0,
+        rng_seed: int = 0
+    ) -> None:
+        """
+        Read an NDJSON file, randomly keep only `subset_frac` of the lines,
+        and write them back out to `output_path` in the same NDJSON format.
+
+        Parameters
+        ----------
+        input_path
+            Path to your original NDJSON (one JSON object per line).
+        output_path
+            Where to write the sampled NDJSON. Overwrites if it exists.
+        subset_frac
+            Fraction in (0, 1] of lines to keep.
+        rng_seed
+            Seed for the random number generator to make sampling reproducible.
+        """
+        input_path  = Path(input_path)
+        output_path = Path(output_path)
+        lines = input_path.read_text().splitlines()
+        M = len(lines)
+        if not (0 < subset_frac <= 1):
+            raise ValueError("subset_frac must be in (0, 1].")
+
+        n_keep = int(np.floor(M * subset_frac))
+        rng = np.random.default_rng(rng_seed)
+        # choose *without* replacement and sort so relative order is preserved
+        keep_idx = np.sort(rng.choice(M, size=n_keep, replace=False))
+
+        # write subset
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        with output_path.open("w", encoding="utf-8") as fout:
+            for i in keep_idx:
+                fout.write(lines[i] + "\n")
     
-
-    def mask_target (self, matrix, target_var: str = "target"):
-        """
-        Mask the target variable in the adjacency matrix
-        Args:
-            target: name of the target variable
-        """
-        # Get index of target variable
-        target_index = self.varlist.index(target_var)
-        
-        # Set all weights to 0 for the target variable
-        masked_adj_matrix = matrix
-
-        masked_adj_matrix[target_index, :] = 0.0
-        masked_adj_matrix[:, target_index] = 0.0
-        
-        return masked_adj_matrix

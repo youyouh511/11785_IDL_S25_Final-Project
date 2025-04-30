@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import DenseGCNConv, GraphNorm
-from .lstm import TemporalLSTM
+from model.lstm import TemporalLSTM
 
 class CausalGNN(nn.Module):
     """
@@ -27,32 +27,32 @@ class CausalGNN(nn.Module):
         self.neg_slp = negative_slope                       # dropout rate
 
         self.num_nodes = num_nodes                          # channel, number of variables
-        self.lstm = TemporalLSTM(hidden_dim)                # Temporal feature extractor
+        self.lstm = TemporalLSTM(hidden_dim=hidden_dim)                # Temporal feature extractor
 
         # This will move to device when model.to(device) is called
-        self.register_buffer('adj', adj_matrix.float())     # register buffer for device compatibility
+        self.register_buffer('adj', adj_matrix)     # register buffer for device compatibility
         
         # 2 layers of Conv to update temporal node features
-        self.gc1 = nn.DenseGCNConv(
+        self.gc1 = DenseGCNConv(
             in_channels=hidden_dim,
             out_channels=hidden_dim*2, 
-            kernel_size=1)
-        self.gn1 = nn.GraphNorm(hidden_dim*2)
+            )
+        self.gn1 = GraphNorm(hidden_dim*2)
 
-        self.gc2 = nn.DenseGCNConv(
+        self.gc2 = DenseGCNConv(
             in_channels=hidden_dim*2,
             out_channels=hidden_dim,
-            kernel_size=1)
-        self.gn2 = nn.GraphNorm(hidden_dim)
+            )
+        self.gn2 = GraphNorm(hidden_dim)
         
         self.avgpool = nn.AdaptiveAvgPool1d(1)              # global average pooling of node features
         self.final_linear = nn.Linear(hidden_dim, 2)        # final linear binary classifier
         
         # Weight initialization
         for layer in [self.final_linear]:
-            nn.init.xavier_uniform_(layer.weight)           # Apply Xavier normalization as in the paper
+            nn.init.normal_(layer.weight)
             if layer.bias is not None:
-                nn.init.zeros_(layer.bias)                  # Zero initialization for biases
+                nn.init.zeros_(layer.bias)
 
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
