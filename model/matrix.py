@@ -257,7 +257,6 @@ class AdjacencyMatrix:
         tau_max: int,
         pc_alpha: float,
         independence_test: str = "ParCorr",
-        n_jobs: int = 4,               # number of CPU cores to use
         use_gpu: bool = True,          # whether to offload GPDCtorch to GPU
         gpu_device: str = "cuda:0"     # which CUDA device
     ):
@@ -269,10 +268,7 @@ class AdjacencyMatrix:
             ind_test = RobustParCorr()
         elif independence_test == "GPDCtorch":
             # GPDCtorch will run on GPU if you tell it to
-            ind_test = GPDCtorch(
-                cuda=use_gpu,
-                gpu_device=gpu_device,
-            )
+            ind_test = GPDCtorch()
         else:
             print(f"Unknown test {independence_test}; defaulting to ParCorr")
             ind_test = ParCorr()
@@ -350,7 +346,7 @@ class AdjacencyMatrix:
             dataframe=self.dataframe,
             independence_test=self.ind_test,
             tau_max=self.tau_max,
-            pc_alpha=self.pc_alpha
+            pc_alpha=self.pc_alpha,
         )
     
 
