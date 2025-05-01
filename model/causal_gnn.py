@@ -11,6 +11,8 @@ class CausalGNN(nn.Module):
     def __init__(
         self,
         adj_matrix: torch.Tensor,    # normalized, masked adjacency matrix
+        num_lstm: int = 1,
+        num_gcn: int = 2,
         num_nodes: int = 6,
         hidden_dim: int = 256,
         negative_slope: float = 0.2,
@@ -22,69 +24,63 @@ class CausalGNN(nn.Module):
             hidden_dim: dimension of the hidden state in LSTM, default to 256 as in the paper
         """
         super().__init__()
+        self.H       = hidden_dim
+        self.neg_slp = negative_slope
+        self.num_nodes = num_nodes
 
-        self.H = hidden_dim                                 # hidden dimension
-        self.neg_slp = negative_slope                       # dropout rate
+        # 1) temporal feature extractor
+        self.lstm = TemporalLSTM(num_layers=num_lstm, hidden_dim=hidden_dim)
 
-        self.num_nodes = num_nodes                          # channel, number of variables
-        self.lstm = TemporalLSTM(hidden_size=hidden_dim)                # Temporal feature extractor
+        # register adjacency
+        self.register_buffer('adj', adj_matrix.float())
 
-        # This will move to device when model.to(device) is called
-        self.register_buffer('adj', adj_matrix)     # register buffer for device compatibility
-        
-        # 2 layers of Conv to update temporal node features
-        self.gc1 = DenseGCNConv(
-            in_channels=hidden_dim,
-            out_channels=hidden_dim*2, 
-            )
-        self.gn1 = GraphNorm(hidden_dim*2)
+        # 2) graph conv + graph norm
+        self.gcn_layers = nn.ModuleList()
+        self.norm_layers = nn.ModuleList()
 
-        self.gc2 = DenseGCNConv(
-            in_channels=hidden_dim*2,
-            out_channels=hidden_dim,
-            )
-        self.gn2 = GraphNorm(hidden_dim)
-        
-        self.avgpool = nn.AdaptiveAvgPool1d(1)              # global average pooling of node features
-        self.final_linear = nn.Linear(hidden_dim, 2)        # final linear binary classifier
-        
-        # Weight initialization
-        for layer in [self.final_linear]:
-            nn.init.xavier_normal_(layer.weight)           # Apply Xavier normalization as in the paper
-            if layer.bias is not None:
-                nn.init.zeros_(layer.bias)                  # Zero initialization for biases
+        for i in range(num_gcn):
+            in_ch = self.H * num_lstm if i == 0 else self.H
+            self.gcn_layers.append(DenseGCNConv(in_channels=in_ch, out_channels=self.H))
+            self.norm_layers.append(GraphNorm(self.H))
 
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        # 3) readout
+        self.avgpool     = nn.AdaptiveAvgPool1d(1)
+        self.final_linear = nn.Linear(self.H, 2)
+
+        # initialize final classifier
+        nn.init.xavier_normal_(self.final_linear.weight)
+        if self.final_linear.bias is not None:
+            nn.init.zeros_(self.final_linear.bias)
+
+    def forward(self, x: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """
         Args:
-            x: Tensor of shape (batch_size, num_nodes, seq_len)
-                containing each node's scalar time series
+            x: (B, V, T) node time series
         Returns:
-            logits: Tensor of shape (batch_size, 2)
-                representing the predicted class probabilities
+            logits: (B, 2) pre‐softmax
+            probs : (B,)  positive‐class probability
         """
-
         B, V, T = x.shape
+        # 1) node embeddings
+        e = self.lstm(x)                
 
-        # Node embedding
-        e = self.lstm(x)                                        # (B, V, H)
-    
-        # Graph convolution #1
-        h1 = self.gc1(e, self.adj)                              # (B, V, H) + (V, V) -> (B, V, 2H)
-        h1 = F.leaky_relu(h1, negative_slope=self.neg_slp)
+        # 2) GCN layers
+        h = None
+        for i, (gc, gn) in enumerate(zip(self.gcn_layers, self.norm_layers)):
+            h_in = e if i == 0 else h
+            h = gc(h_in, self.adj)
+            h = gn(h)
+            h = F.leaky_relu(h, negative_slope=self.neg_slp)
 
-        # Graph convolution 2
-        h2 = self.gc2(h1, self. adj)                            # -> (B, V, H)
-        h2 = F.leaky_relu(h2, negative_slope=self.neg_slp)
+        # 3) global pool + classifier
+        # permute to (B, H, V) for 1d‐pool over nodes
+        feats = h.permute(0, 2, 1)      # → (B, H, V)
+        pooled = self.avgpool(feats)    # → (B, H, 1)
+        pooled = pooled.squeeze(-1)     # → (B, H)
+        logits = self.final_linear(pooled)  # → (B, 2)
 
-        # Global average pooling & Binary classification
-        feats = h2.permute(0, 2, 1)                             # -> (B, H, V)
-        pool = self.avgpool(feats).squeeze(-1)                  # -> (B, H)
-        logits = self.final_linear(pool)                        # (B, 2)
-
-        # calculate confidence via softmax
-        probs = F.softmax(logits, dim=-1)                       # (B, )
-        probs = probs[:, 1]                                     # confidence of positive targets
+        # 4) positive‐class confidence
+        probs = F.softmax(logits, dim=-1)[:, 1]  # → (B,)
 
         return logits, probs

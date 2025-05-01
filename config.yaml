@@ -6,35 +6,35 @@
     test_json_path          : "test.json"
     matrix_json_path        : "matrix.json"
     subset                  : 1.0
-    batch_size              : 128
+    batch_size              : 256
     NUM_WORKERS             : 4
 
     ### Target threshold
-    fire_threshold          : 10
+    fire_threshold          : 5
+    safe_threshold          : 1
 
 
 ###### Model
     ### Adjacency matrix
-    local_var_lag           : 8
-    oci_var_lag             : 31
-    max_lag                 : 312
+    timesteps               : 39
     independence_test       : "ParCorr"
-    tau_max                 : 186
+    tau_max                 : 23
     pc_alpha                : 0.05
     mask_target             : True
 
     ### Temporal LSTM
     lstm_layer              : 1
+    gcn_layer               : 2
     hidden_dim              : 256
 
     ### GNN
-    gnn_nodes               : 7
+    gnn_nodes               : 6
 
 
 ###### Training
     epochs                  : 30
 
-    lr                      : 1.0e-5
+    lr                      : 1.0e-4
     min_lr                  : 1.0e-9
 
     optimizer               : "Adam"
